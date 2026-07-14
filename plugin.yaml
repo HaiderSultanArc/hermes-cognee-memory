@@ -1,0 +1,6 @@
+manifest_version: 1
+name: cognee
+version: 0.1.0
+kind: exclusive
+description: "Cognee memory for Hermes — session capture and persistent graph recall over HTTP."
+requires_env: []
