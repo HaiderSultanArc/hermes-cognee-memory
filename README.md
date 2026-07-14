@@ -95,17 +95,19 @@ POST /api/v1/improve
 
 Before the first improvement, the provider idempotently creates the dataset and sends that session ID with `run_in_background: false`. This bridges acknowledged cached Q&A into the permanent knowledge graph with confirmed completion. Turn writes and the improve request share one bounded FIFO worker, so persistence cannot overtake pending captures. Transient writes use bounded exponential retry; an unacknowledged capture blocks improvement rather than falsely marking the session persisted. A prolonged outage can still exceed the in-memory retry and shutdown windows, so this is best-effort unless the operator provides external process supervision and recovery. Set `auto_improve` to `false` if graph processing cost should be triggered manually.
 
-Built-in Hermes `memory` adds and replacements are mirrored. Removes are intentionally **not** translated to Cognee: Cognee's forget operations can have wider dataset/user scope and are not safely equivalent to deleting one Hermes text entry.
+Built-in Hermes `MEMORY.md` and `USER.md` remain the curated source of truth and are not mirrored into Cognee. Without a durable mapping to Cognee `data_id` values, translating a replacement or removal could leave stale contradictory graph facts. Use `cognee_remember` for information that should also enter episodic/graph memory.
 
-### Automatic recall
+### Recall
 
-At the end of a turn, Hermes queues background recall for the next turn through:
+The `cognee_recall` tool is the secure default. The provider tells Hermes to use it proactively when a request may benefit from prior context. Tool results are bounded, deduplicated, flattened, and labeled as untrusted evidence so stored prompt-injection text is not presented as an instruction.
+
+Automatic prefetch is available by setting `auto_recall` to `true`, but is disabled by default. Hermes 0.18.2 wraps all provider-prefetched content in a generic system note that calls it "authoritative reference data"; until Hermes exposes provider-level trust metadata, enabling automatic recall explicitly opts into that trust model. When enabled, Hermes queues background recall through:
 
 ```text
 POST /api/v1/recall
 ```
 
-Default scope is `session + graph`, with automatic Cognee search routing (`search_type: null`). The two sources are queried independently so a missing first-run graph dataset does not discard valid session hits, and a cache outage does not discard graph hits. Background prefetch concurrency is bounded; excess speculative requests are skipped rather than creating unbounded threads. Returned memory is bounded, deduplicated, flattened, and labeled as untrusted reference data. These controls reduce prompt-injection risk but cannot make arbitrary stored text inherently trustworthy.
+Default scope is `session + graph`, with automatic Cognee search routing (`search_type: null`). The two sources are queried independently so a missing first-run graph dataset does not discard valid session hits, and a cache outage does not discard graph hits. Background prefetch concurrency is bounded; excess speculative requests are skipped rather than creating unbounded threads.
 
 ### Tools
 
@@ -126,13 +128,15 @@ Edit `$HERMES_HOME/cognee/config.json`:
   "dataset_name": "hermes-{identity}",
   "auto_capture": true,
   "auto_improve": true,
-  "auto_recall": true,
+  "auto_recall": false,
   "recall_scope": ["session", "graph"],
   "top_k": 8,
   "request_timeout_seconds": 15,
   "prefetch_timeout_seconds": 3,
   "prefetch_max_concurrency": 2,
   "max_prefetch_chars": 6000,
+  "recall_circuit_failure_threshold": 3,
+  "recall_circuit_cooldown_seconds": 30,
   "writer_queue_size": 256,
   "write_retry_attempts": 3,
   "write_retry_base_seconds": 0.25,
@@ -140,7 +144,7 @@ Edit `$HERMES_HOME/cognee/config.json`:
 }
 ```
 
-`prefetch_timeout_seconds` only bounds how long Hermes waits for a queued background result. Network calls themselves are bounded by `request_timeout_seconds`.
+`prefetch_timeout_seconds` only bounds how long Hermes waits for a queued background result. Network calls themselves are bounded by `request_timeout_seconds`. After `recall_circuit_failure_threshold` consecutive all-source recall failures, automatic and explicit recall pause for `recall_circuit_cooldown_seconds`. After cooldown, exactly one request probes the service; a failed probe immediately reopens the circuit, while a successful probe closes it.
 
 ## Verify
 
@@ -161,6 +165,20 @@ uv build
 
 The suite includes a real Hermes discovery/load test and an end-to-end local HTTP transport test.
 
+## Repository layout
+
+The implementation, module documentation, and tests use matching paths:
+
+```text
+src/hermes_cognee_memory/
+docs/hermes_cognee_memory/
+tests/hermes_cognee_memory/
+```
+
+The root `__init__.py` is intentionally a thin exception to the `src` layout. Hermes loads that
+file directly when it discovers a standalone plugin; the file only re-exports the provider from
+`src/hermes_cognee_memory`.
+
 ## Security notes
 
 - API keys are sent only in the `X-Api-Key` header and are never written to provider JSON.
@@ -169,7 +187,7 @@ The suite includes a real Hermes discovery/load test and an end-to-end local HTT
 - Plain HTTP is accepted only for loopback services; remote and link-local Cognee services must use HTTPS.
 - Gateway datasets follow Hermes's effective session boundary using deterministic hashes. DMs and per-user sessions remain isolated; intentionally shared group/thread sessions share memory just as they share transcript context. Missing gateway scope fails closed, and raw identifiers are never placed in dataset names.
 - Automatic capture sends completed user/assistant turns, and automatic recall sends the current query, to the configured Cognee service. Set both `auto_capture` and `auto_recall` to `false` when conversation data must stay inside Hermes.
-- Recalled content is untrusted data. It is flattened to one line per field and explicitly labeled as reference data; it must not override the live system/user prompt.
+- Explicitly recalled content is probabilistic, untrusted evidence. It is flattened to one line per field and labeled as non-authoritative data; it cannot authorize actions or override current user instructions or curated Hermes memory. Automatic recall is opt-in because Hermes 0.18.2 applies its generic authoritative-memory wrapper to provider-prefetched content.
 - Cognee is a network memory service. Its availability, retention, backups, access control, and deletion policy remain operator responsibilities.
 
 ## License

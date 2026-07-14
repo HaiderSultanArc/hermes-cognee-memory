@@ -27,6 +27,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["hermes_cognee_memory*"]
 
 [tool.pytest.ini_options]

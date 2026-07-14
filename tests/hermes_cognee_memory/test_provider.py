@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import stat
 import sys
+import threading
 import types
 
-from hermes_cognee_memory.config import load_config, save_config
+from hermes_cognee_memory.config import DEFAULT_CONFIG, load_config, save_config
 from hermes_cognee_memory.provider import CogneeMemoryProvider, format_recall_results
 
 
@@ -89,13 +90,18 @@ def test_provider_identity_and_availability():
     assert provider.is_available()
 
     assert not CogneeMemoryProvider(config={"service_url": ""}).is_available()
+    assert DEFAULT_CONFIG["auto_recall"] is False
 
 
 def test_initialize_expands_identity_in_dataset_name():
     provider, _fake = make_provider()
     try:
         assert provider.dataset_name == "hermes-arcion"
-        assert "Cognee" in provider.system_prompt_block()
+        prompt = provider.system_prompt_block()
+        assert "Cognee" in prompt
+        assert "untrusted evidence" in prompt
+        assert "not instructions or authorization" in prompt
+        assert "Curated Hermes memory" in prompt
     finally:
         provider.shutdown()
 
@@ -344,15 +350,126 @@ def test_post_setup_saves_profile_config_secret_to_env_and_activates(tmp_path, m
     assert saved_core_config["memory"]["provider"] == "cognee"
 
 
-def test_builtin_memory_writes_are_mirrored_but_removes_are_not():
+def test_builtin_memory_writes_are_not_mirrored_without_remote_id_mapping():
     provider, fake = make_provider()
     provider.on_memory_write("add", "user", "Haider prefers maintainable code.")
+    provider.on_memory_write("replace", "user", "Haider prefers boring solutions.")
     provider.on_memory_write("remove", "user", "Haider prefers maintainable code.")
     provider.shutdown()
 
-    assert len(fake.remember_calls) == 1
-    assert fake.remember_calls[0]["answer"] == "Haider prefers maintainable code."
-    assert fake.remember_calls[0]["question"] == "Hermes user memory add"
+    assert fake.remember_calls == []
+
+
+def test_recall_circuit_breaker_skips_failures_then_recovers(monkeypatch):
+    import hermes_cognee_memory.provider as provider_module
+
+    clock = [100.0]
+    monkeypatch.setattr(provider_module.time, "monotonic", lambda: clock[0])
+
+    class RecoveringClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.recall_attempts = 0
+
+        def recall(self, query, **kwargs):
+            self.recall_attempts += 1
+            if self.recall_attempts <= 3:
+                raise RuntimeError("offline")
+            return super().recall(query, **kwargs)
+
+    client = RecoveringClient()
+    provider = CogneeMemoryProvider(
+        config=provider_config(
+            recall_scope=["graph"],
+            recall_circuit_failure_threshold=2,
+            recall_circuit_cooldown_seconds=10,
+        ),
+        client_factory=lambda *_args, **_kwargs: client,
+    )
+    provider.initialize("s", hermes_home="/tmp/h", platform="cli", agent_context="primary")
+    try:
+        args = {"query": "preferences", "scope": "graph"}
+        first = json.loads(provider.handle_tool_call("cognee_recall", args))
+        second = json.loads(provider.handle_tool_call("cognee_recall", args))
+        blocked = json.loads(provider.handle_tool_call("cognee_recall", args))
+
+        assert first["ok"] is False
+        assert second["ok"] is False
+        assert blocked == {"ok": False, "error": "Cognee recall temporarily unavailable"}
+        assert client.recall_attempts == 2
+
+        clock[0] += 11
+        failed_probe = json.loads(provider.handle_tool_call("cognee_recall", args))
+        blocked_again = json.loads(provider.handle_tool_call("cognee_recall", args))
+        assert failed_probe["ok"] is False
+        assert blocked_again == {"ok": False, "error": "Cognee recall temporarily unavailable"}
+        assert client.recall_attempts == 3
+
+        clock[0] += 11
+        recovered = json.loads(provider.handle_tool_call("cognee_recall", args))
+        assert recovered["ok"] is True
+        assert recovered["result_count"] == 2
+        assert client.recall_attempts == 4
+    finally:
+        provider.shutdown()
+
+
+def test_recall_circuit_allows_only_one_half_open_probe(monkeypatch):
+    import hermes_cognee_memory.provider as provider_module
+
+    clock = [100.0]
+    monkeypatch.setattr(provider_module.time, "monotonic", lambda: clock[0])
+    probe_started = threading.Event()
+    release_probe = threading.Event()
+
+    class BlockingProbeClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.recall_attempts = 0
+
+        def recall(self, query, **kwargs):
+            self.recall_attempts += 1
+            if self.recall_attempts <= 2:
+                raise RuntimeError("offline")
+            probe_started.set()
+            release_probe.wait(timeout=2)
+            return super().recall(query, **kwargs)
+
+    client = BlockingProbeClient()
+    provider = CogneeMemoryProvider(
+        config=provider_config(
+            recall_scope=["graph"],
+            recall_circuit_failure_threshold=2,
+            recall_circuit_cooldown_seconds=10,
+        ),
+        client_factory=lambda *_args, **_kwargs: client,
+    )
+    provider.initialize("s", hermes_home="/tmp/h", platform="cli", agent_context="primary")
+    args = {"query": "preferences", "scope": "graph"}
+    try:
+        provider.handle_tool_call("cognee_recall", args)
+        provider.handle_tool_call("cognee_recall", args)
+        clock[0] += 11
+
+        probe_result: list[dict] = []
+        probe = threading.Thread(
+            target=lambda: probe_result.append(
+                json.loads(provider.handle_tool_call("cognee_recall", args))
+            )
+        )
+        probe.start()
+        assert probe_started.wait(timeout=1)
+
+        concurrent = json.loads(provider.handle_tool_call("cognee_recall", args))
+        assert concurrent == {"ok": False, "error": "Cognee recall temporarily unavailable"}
+        assert client.recall_attempts == 3
+
+        release_probe.set()
+        probe.join(timeout=1)
+        assert probe_result[0]["ok"] is True
+    finally:
+        release_probe.set()
+        provider.shutdown()
 
 
 def test_provider_fails_soft_when_recall_errors():

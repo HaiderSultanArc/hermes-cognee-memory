@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def test_plugin_loads_through_real_hermes_memory_discovery(tmp_path, monkeypatch):
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     hermes_home = tmp_path / "hermes"
     plugin_dir = hermes_home / "plugins" / "cognee"
     shutil.copytree(project_root, plugin_dir, ignore=shutil.ignore_patterns(".venv", ".git", "__pycache__"))
@@ -26,7 +26,7 @@ def test_plugin_loads_through_real_hermes_memory_discovery(tmp_path, monkeypatch
 
 
 def test_root_plugin_module_exposes_provider_class_without_singleton_registration():
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     module_name = "hermes_cognee_memory_test_plugin"
     spec = importlib.util.spec_from_file_location(
         module_name,
