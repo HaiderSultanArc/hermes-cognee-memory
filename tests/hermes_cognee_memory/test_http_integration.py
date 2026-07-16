@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from hermes_cognee_memory.client import CogneeClient
 from hermes_cognee_memory.provider import CogneeMemoryProvider
+
+ENTRY_ID = "1e72631c-d08a-4c6d-8552-50a53d4d035c"
 
 
 class CogneeContractHandler(BaseHTTPRequestHandler):
@@ -37,7 +40,9 @@ class CogneeContractHandler(BaseHTTPRequestHandler):
         if self.path == "/api/v1/remember/entry":
             assert payload["entry"]["type"] == "qa"
             assert payload["dataset_name"] == "hermes-arcion"
-            self._send({"status": "session_stored", "entry_type": "qa", "entry_id": "q1"})
+            self._send(
+                {"status": "session_stored", "entry_type": "qa", "entry_id": ENTRY_ID}
+            )
             return
         if self.path == "/api/v1/recall":
             assert payload["search_type"] is None
@@ -48,6 +53,7 @@ class CogneeContractHandler(BaseHTTPRequestHandler):
                     [
                         {
                             "source": "session",
+                            "qa_id": ENTRY_ID,
                             "question": "Preferred approach?",
                             "answer": "Use the boring solution.",
                         }
@@ -104,6 +110,7 @@ def test_real_http_transport_and_provider_lifecycle():
     try:
         provider.initialize(
             "session-http",
+            hermes_home=tempfile.mkdtemp(prefix="hermes-cognee-http-test-"),
             platform="cli",
             agent_context="primary",
             agent_identity="arcion",

@@ -3,7 +3,7 @@
 Source: `src/hermes_cognee_memory/client.py`
 
 `CogneeClient` is the dependency-free synchronous transport between Hermes and Cognee. It supports
-health checks, dataset creation, Q&A capture, session improvement, and recall.
+health checks, dataset creation, Q&A capture, exact entry deletion, session improvement, and recall.
 
 The client deliberately keeps the network boundary narrow:
 
@@ -20,3 +20,6 @@ session-cache failures wait for the longest budget.
 
 The client is synchronous because Hermes invokes it from bounded provider worker and prefetch
 threads. Concurrency and retries belong to the provider, not this transport layer.
+
+Exact deletion calls `POST /api/v1/forget/entry` with the entry UUID, session ID, and dataset name.
+The client does not expose Cognee's broad dataset/everything deletion operations.

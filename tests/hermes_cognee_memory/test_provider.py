@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import stat
 import sys
+import tempfile
 import threading
 import types
 
 from hermes_cognee_memory.config import DEFAULT_CONFIG, load_config, save_config
 from hermes_cognee_memory.provider import CogneeMemoryProvider, format_recall_results
+
+ENTRY_ID = "1e72631c-d08a-4c6d-8552-50a53d4d035c"
 
 
 class FakeClient:
@@ -15,6 +18,7 @@ class FakeClient:
         self.remember_calls = []
         self.improve_calls = []
         self.recall_calls = []
+        self.forget_calls = []
         self.health_calls = 0
 
     def health(self):
@@ -23,7 +27,16 @@ class FakeClient:
 
     def remember_qa(self, **kwargs):
         self.remember_calls.append(kwargs)
-        return {"status": "session_stored", "entry_type": "qa", "entry_id": "q1"}
+        return {"status": "session_stored", "entry_type": "qa", "entry_id": ENTRY_ID}
+
+    def forget_entry(self, **kwargs):
+        self.forget_calls.append(kwargs)
+        return {
+            "status": "forgotten",
+            "entry_id": kwargs["entry_id"],
+            "session_deleted": True,
+            "graph_deleted": True,
+        }
 
     def improve_sessions(self, **kwargs):
         self.improve_calls.append(kwargs)
@@ -37,7 +50,7 @@ class FakeClient:
         return [
             {
                 "source": "session",
-                "id": "q1",
+                "qa_id": ENTRY_ID,
                 "question": "What style?",
                 "answer": "Use the boring solution.",
             },
@@ -68,7 +81,7 @@ def provider_config(**overrides):
     return config
 
 
-def make_provider(config=None):
+def make_provider(config=None, *, hermes_home=None):
     fake = FakeClient()
     provider = CogneeMemoryProvider(
         config=config or provider_config(),
@@ -76,7 +89,7 @@ def make_provider(config=None):
     )
     provider.initialize(
         "session-1",
-        hermes_home="/tmp/hermes-test",
+        hermes_home=hermes_home or tempfile.mkdtemp(prefix="hermes-cognee-test-"),
         platform="cli",
         agent_context="primary",
         agent_identity="arcion",
@@ -262,7 +275,7 @@ def test_tools_support_explicit_recall_and_remember():
     provider, fake = make_provider()
     try:
         names = {schema["name"] for schema in provider.get_tool_schemas()}
-        assert names == {"cognee_recall", "cognee_remember"}
+        assert names == {"cognee_recall", "cognee_remember", "cognee_forget"}
 
         recalled = json.loads(
             provider.handle_tool_call(
@@ -275,8 +288,81 @@ def test_tools_support_explicit_recall_and_remember():
 
         assert recalled["ok"] is True
         assert "Haider values maintainability." in recalled["context"]
-        assert remembered == {"ok": True, "entry_id": "q1", "status": "session_stored"}
+        assert recalled["forgettable_entry_ids"] == []
+        assert remembered == {
+            "ok": True,
+            "entry_id": ENTRY_ID,
+            "status": "session_stored",
+        }
         assert fake.remember_calls[-1]["answer"] == "Prefer boring solutions."
+    finally:
+        provider.shutdown()
+
+
+def test_forget_requires_local_provenance_and_retains_tombstone(tmp_path):
+    provider, fake = make_provider(hermes_home=str(tmp_path))
+    try:
+        unknown = json.loads(
+            provider.handle_tool_call(
+                "cognee_forget",
+                {"entry_id": "05d7eec9-9c60-4c86-bb23-9af159bc06b4"},
+            )
+        )
+        assert unknown == {
+            "ok": False,
+            "error": "entry_id is not present in this Hermes provenance ledger",
+        }
+        assert fake.forget_calls == []
+
+        remembered = json.loads(
+            provider.handle_tool_call("cognee_remember", {"content": "Forget this later."})
+        )
+        forgotten = json.loads(
+            provider.handle_tool_call("cognee_forget", {"entry_id": remembered["entry_id"]})
+        )
+        repeated = json.loads(
+            provider.handle_tool_call("cognee_forget", {"entry_id": remembered["entry_id"]})
+        )
+
+        assert forgotten == {
+            "ok": True,
+            "entry_id": ENTRY_ID,
+            "status": "forgotten",
+            "session_deleted": True,
+            "graph_deleted": True,
+        }
+        assert repeated == {
+            "ok": True,
+            "entry_id": ENTRY_ID,
+            "status": "already_forgotten",
+        }
+        assert fake.forget_calls == [
+            {
+                "entry_id": ENTRY_ID,
+                "session_id": "session-1",
+                "dataset_name": "hermes-arcion",
+            }
+        ]
+    finally:
+        provider.shutdown()
+
+
+def test_recall_suppresses_forgotten_session_entry(tmp_path):
+    provider, _fake = make_provider(hermes_home=str(tmp_path))
+    try:
+        provider.handle_tool_call("cognee_remember", {"content": "Forget this later."})
+        before = json.loads(
+            provider.handle_tool_call("cognee_recall", {"query": "style", "scope": "session"})
+        )
+        provider.handle_tool_call("cognee_forget", {"entry_id": ENTRY_ID})
+        after = json.loads(
+            provider.handle_tool_call("cognee_recall", {"query": "style", "scope": "session"})
+        )
+
+        assert before["forgettable_entry_ids"] == [ENTRY_ID]
+        assert before["result_count"] == 2
+        assert after["forgettable_entry_ids"] == []
+        assert after["result_count"] == 1
     finally:
         provider.shutdown()
 

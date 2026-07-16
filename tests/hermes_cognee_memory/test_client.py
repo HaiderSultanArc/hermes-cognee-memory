@@ -149,6 +149,39 @@ def test_remember_qa_posts_typed_entry(monkeypatch):
     assert response["entry_id"] == "q1"
 
 
+def test_forget_entry_posts_exact_provenance_tuple(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen["request"] = request
+        return FakeResponse(
+            {
+                "status": "forgotten",
+                "entry_id": "1e72631c-d08a-4c6d-8552-50a53d4d035c",
+                "session_deleted": True,
+                "graph_deleted": True,
+            }
+        )
+
+    monkeypatch.setattr("hermes_cognee_memory.client.urlopen", fake_urlopen)
+    client = CogneeClient("http://localhost:8000")
+
+    response = client.forget_entry(
+        entry_id="1e72631c-d08a-4c6d-8552-50a53d4d035c",
+        session_id="session-1",
+        dataset_name="hermes-arcion",
+    )
+
+    request = seen["request"]
+    assert request.full_url == "http://localhost:8000/api/v1/forget/entry"
+    assert json.loads(request.data) == {
+        "entry_id": "1e72631c-d08a-4c6d-8552-50a53d4d035c",
+        "session_id": "session-1",
+        "dataset": "hermes-arcion",
+    }
+    assert response["status"] == "forgotten"
+
+
 def test_improve_sessions_posts_background_persistence_request(monkeypatch):
     seen = {}
 

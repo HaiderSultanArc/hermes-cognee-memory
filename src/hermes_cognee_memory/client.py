@@ -163,6 +163,26 @@ class CogneeClient:
             raise CogneeAPIError("Cognee dataset endpoint returned an unexpected response")
         return result
 
+    def forget_entry(
+        self,
+        *,
+        entry_id: str,
+        session_id: str,
+        dataset_name: str,
+    ) -> dict[str, Any]:
+        result = self._request(
+            "POST",
+            "/api/v1/forget/entry",
+            {
+                "entry_id": entry_id,
+                "session_id": session_id,
+                "dataset": dataset_name,
+            },
+        )
+        if not isinstance(result, dict):
+            raise CogneeAPIError("Cognee forget endpoint returned an unexpected response")
+        return result
+
     def improve_sessions(
         self,
         *,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import stat
+import tempfile
 import threading
 import time
 
@@ -11,16 +12,28 @@ from hermes_cognee_memory.client import CogneeAPIError, CogneeClient, normalize_
 from hermes_cognee_memory.config import load_config, save_config
 from hermes_cognee_memory.provider import CogneeMemoryProvider
 
+ENTRY_ID = "1e72631c-d08a-4c6d-8552-50a53d4d035c"
+
 
 class FakeClient:
     def __init__(self, *_args, **_kwargs):
         self.remember_calls = []
         self.improve_calls = []
         self.ensure_dataset_calls = []
+        self.forget_calls = []
 
     def remember_qa(self, **kwargs):
         self.remember_calls.append(kwargs)
-        return {"status": "session_stored", "entry_id": "q1"}
+        return {"status": "session_stored", "entry_id": ENTRY_ID}
+
+    def forget_entry(self, **kwargs):
+        self.forget_calls.append(kwargs)
+        return {
+            "status": "forgotten",
+            "entry_id": kwargs["entry_id"],
+            "session_deleted": True,
+            "graph_deleted": True,
+        }
 
     def improve_sessions(self, **kwargs):
         self.improve_calls.append(kwargs)
@@ -59,7 +72,12 @@ def make_provider(*, config=None, client=None, session_id="session-1", **initial
         config=config or provider_config(),
         client_factory=lambda *_args, **_kwargs: fake,
     )
-    init = {"platform": "cli", "agent_context": "primary", "agent_identity": "arcion"}
+    init = {
+        "platform": "cli",
+        "agent_context": "primary",
+        "agent_identity": "arcion",
+        "hermes_home": tempfile.mkdtemp(prefix="hermes-cognee-security-test-"),
+    }
     init.update(initialize_kwargs)
     provider.initialize(session_id, **init)
     return provider, fake
@@ -191,7 +209,7 @@ def test_session_end_bootstraps_dataset_and_improves_once_per_write_version():
     provider.on_session_end([])
     provider.shutdown()
 
-    assert fake.ensure_dataset_calls == ["hermes-arcion", "hermes-arcion"]
+    assert fake.ensure_dataset_calls == ["hermes-arcion"]
     assert fake.improve_calls == [
         {
             "dataset_name": "hermes-arcion",

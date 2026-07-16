@@ -93,7 +93,7 @@ After each completed primary-agent turn, the provider queues a non-blocking requ
 POST /api/v1/remember/entry
 ```
 
-The entry type is `qa`, with the Hermes session ID and configured Cognee dataset. Gateway memory receives a deterministic hashed suffix derived from Hermes's effective session key: DMs and per-user sessions stay isolated, while intentionally shared group/thread sessions share their conversation dataset. Primary non-CLI initialization without that scope fails closed; a user identifier alone is not accepted because it cannot prove whether the conversation is shared. Local CLI sessions retain the profile-wide dataset name. Cron/delegated/non-primary contexts do not auto-write.
+The entry type is `qa`, with the Hermes session ID and configured Cognee dataset. The provider creates the dataset before the first capture, then records the acknowledged entry UUID in `$HERMES_HOME/cognee/provenance.json`. Gateway memory receives a deterministic hashed suffix derived from Hermes's effective session key: DMs and per-user sessions stay isolated, while intentionally shared group/thread sessions share their conversation dataset. Primary non-CLI initialization without that scope fails closed; a user identifier alone is not accepted because it cannot prove whether the conversation is shared. Local CLI sessions retain the profile-wide dataset name. Cron/delegated/non-primary contexts do not auto-write.
 
 At a real Hermes session boundary (exit, reset, or gateway expiry), the provider queues:
 
@@ -101,9 +101,9 @@ At a real Hermes session boundary (exit, reset, or gateway expiry), the provider
 POST /api/v1/improve
 ```
 
-Before the first improvement, the provider idempotently creates the dataset and sends that session ID with `run_in_background: false`. This bridges acknowledged cached Q&A into the permanent knowledge graph with confirmed completion. Turn writes and the improve request share one bounded FIFO worker, so persistence cannot overtake pending captures. Transient writes use bounded exponential retry; an unacknowledged capture blocks improvement rather than falsely marking the session persisted. A prolonged outage can still exceed the in-memory retry and shutdown windows, so this is best-effort unless the operator provides external process supervision and recovery. Set `auto_improve` to `false` if graph processing cost should be triggered manually.
+The provider sends that session ID with `run_in_background: false`. This bridges acknowledged cached Q&A into the permanent knowledge graph with confirmed completion. Turn writes and the improve request share one bounded FIFO worker, so persistence cannot overtake pending captures. Transient writes use bounded exponential retry; an unacknowledged capture blocks improvement rather than falsely marking the session persisted. A prolonged outage can still exceed the in-memory retry and shutdown windows, so this is best-effort unless the operator provides external process supervision and recovery. Set `auto_improve` to `false` if graph processing cost should be triggered manually.
 
-Built-in Hermes `MEMORY.md` and `USER.md` remain the curated source of truth and are not mirrored into Cognee. Without a durable mapping to Cognee `data_id` values, translating a replacement or removal could leave stale contradictory graph facts. Use `cognee_remember` for information that should also enter episodic/graph memory.
+Built-in Hermes `MEMORY.md` and `USER.md` remain the curated source of truth and are not mirrored into Cognee. Use `cognee_remember` for information that should also enter episodic/graph memory. The provider records the returned entry UUID, dataset, and session locally so exact Cognee entries created by this version can later be forgotten without copying their content into the ledger.
 
 ### Recall
 
@@ -117,14 +117,23 @@ POST /api/v1/recall
 
 Default scope is `session + graph`, with automatic Cognee search routing (`search_type: null`). The two sources are queried independently so a missing first-run graph dataset does not discard valid session hits, and a cache outage does not discard graph hits. Background prefetch concurrency is bounded; excess speculative requests are skipped rather than creating unbounded threads.
 
+Session recall results are checked against local tombstones before being returned. Explicit recall also reports `forgettable_entry_ids` for results with a current, active provenance mapping.
+
+### Exact forgetting
+
+`cognee_forget` accepts only one entry UUID. The provider requires a matching non-forgotten record in the local provenance ledger and requires that record to belong to the active dataset. It then calls `POST /api/v1/forget/entry` with the ledger's session and dataset values. A tombstone is written only after Cognee confirms graph deletion for that same UUID; a missing expired cache entry does not invalidate an otherwise successful graph deletion.
+
+The ledger is bounded and contains no memory text. Missing, malformed, unsafe, or evicted provenance fails closed. Entries created before one-Q&A-per-data-item persistence cannot be safely mapped back out of an older grouped graph document and are therefore not accepted by this tool.
+
 ### Tools
 
 The provider exposes:
 
 - `cognee_recall` — explicit memory lookup with scope and result limit
 - `cognee_remember` — explicit session capture, persisted to the graph after a successful session-end improvement
+- `cognee_forget` — delete one locally proven entry UUID after an explicit user request
 
-No broad delete tool is exposed.
+No broad or query-based delete tool is exposed. Exact forgetting requires the matching Cognee server update with `POST /api/v1/forget/entry`; existing graph snapshots are not retroactively made individually deletable.
 
 ## Advanced configuration
 
