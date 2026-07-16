@@ -75,7 +75,7 @@ class CogneeClient:
         api_key: str = "",
         timeout: float = 15.0,
         graph_recall_timeout: float = 45.0,
-        improve_timeout: float = 120.0,
+        improve_timeout: float = 300.0,
     ) -> None:
         self.service_url = normalize_service_url(service_url)
         self.api_key = str(api_key or "").strip()

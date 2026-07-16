@@ -141,7 +141,7 @@ Edit `$HERMES_HOME/cognee/config.json`:
   "top_k": 8,
   "request_timeout_seconds": 15,
   "graph_recall_timeout_seconds": 45,
-  "improve_timeout_seconds": 120,
+  "improve_timeout_seconds": 300,
   "prefetch_timeout_seconds": 3,
   "prefetch_max_concurrency": 2,
   "max_prefetch_chars": 6000,
@@ -150,7 +150,7 @@ Edit `$HERMES_HOME/cognee/config.json`:
   "writer_queue_size": 256,
   "write_retry_attempts": 3,
   "write_retry_base_seconds": 0.25,
-  "shutdown_flush_seconds": 130
+  "shutdown_flush_seconds": 310
 }
 ```
 

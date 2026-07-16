@@ -14,5 +14,5 @@ The defaults keep automatic capture and improvement enabled, automatic recall di
 and queue sizes bounded, and recall failures protected by a small circuit breaker. Fast
 health/session operations use `request_timeout_seconds` (15 seconds), graph-capable recall uses
 `graph_recall_timeout_seconds` (45 seconds), and synchronous session improvement uses
-`improve_timeout_seconds` (120 seconds). `shutdown_flush_seconds` defaults to 130 seconds so the
+`improve_timeout_seconds` (300 seconds). `shutdown_flush_seconds` defaults to 310 seconds so the
 ordered writer can finish one in-flight improvement before teardown.
