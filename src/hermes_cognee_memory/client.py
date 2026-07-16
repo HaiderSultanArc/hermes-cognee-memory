@@ -68,12 +68,29 @@ def normalize_service_url(value: str) -> str:
 class CogneeClient:
     """Synchronous adapter for the Cognee HTTP API used by Hermes threads."""
 
-    def __init__(self, service_url: str, *, api_key: str = "", timeout: float = 15.0) -> None:
+    def __init__(
+        self,
+        service_url: str,
+        *,
+        api_key: str = "",
+        timeout: float = 15.0,
+        graph_recall_timeout: float = 45.0,
+        improve_timeout: float = 120.0,
+    ) -> None:
         self.service_url = normalize_service_url(service_url)
         self.api_key = str(api_key or "").strip()
         self.timeout = max(0.1, float(timeout))
+        self.graph_recall_timeout = max(0.1, float(graph_recall_timeout))
+        self.improve_timeout = max(0.1, float(improve_timeout))
 
-    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> Any:
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {"Accept": "application/json"}
         if body is not None:
@@ -87,7 +104,7 @@ class CogneeClient:
             method=method,
         )
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with urlopen(request, timeout=self.timeout if timeout is None else timeout) as response:
                 response_body = response.read(_MAX_RESPONSE_BYTES + 1)
                 if len(response_body) > _MAX_RESPONSE_BYTES:
                     raise CogneeAPIError("Cognee API response is too large")
@@ -162,6 +179,7 @@ class CogneeClient:
                 "run_in_background": run_in_background,
                 "build_global_context_index": False,
             },
+            timeout=self.improve_timeout,
         )
         if not isinstance(result, dict):
             raise CogneeAPIError("Cognee improve endpoint returned an unexpected response")
@@ -186,7 +204,14 @@ class CogneeClient:
             "only_context": False,
             "include_references": True,
         }
-        result = self._request("POST", "/api/v1/recall", payload)
+        graph_scopes = {"auto", "graph", "all"}
+        requested_scopes = {scope} if isinstance(scope, str) else set(scope or ["auto"])
+        timeout = (
+            self.graph_recall_timeout
+            if requested_scopes.intersection(graph_scopes)
+            else self.timeout
+        )
+        result = self._request("POST", "/api/v1/recall", payload, timeout=timeout)
         if not isinstance(result, list):
             raise CogneeAPIError("Cognee recall endpoint expected a list response")
         return [item for item in result if isinstance(item, dict)]

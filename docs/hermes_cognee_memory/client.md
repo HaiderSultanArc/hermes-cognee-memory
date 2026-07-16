@@ -13,5 +13,10 @@ The client deliberately keeps the network boundary narrow:
 - responses are capped at 2 MiB and endpoint response shapes are validated;
 - transport and response errors are converted to `CogneeAPIError` with bounded messages.
 
+The transport uses operation-specific timeouts: short requests keep the base timeout, recall that
+can enter the graph uses the graph-recall timeout, and synchronous improvement uses the improvement
+timeout. This prevents slow graph work from being reported as an outage without making health and
+session-cache failures wait for the longest budget.
+
 The client is synchronous because Hermes invokes it from bounded provider worker and prefetch
 threads. Concurrency and retries belong to the provider, not this transport layer.

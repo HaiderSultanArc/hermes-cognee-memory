@@ -34,6 +34,9 @@ include = ["hermes_cognee_memory*"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 
+[tool.coverage.run]
+source = ["src/hermes_cognee_memory"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

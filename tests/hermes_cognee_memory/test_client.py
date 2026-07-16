@@ -82,7 +82,12 @@ def test_recall_posts_expected_payload_and_api_key(monkeypatch):
         )
 
     monkeypatch.setattr("hermes_cognee_memory.client.urlopen", fake_urlopen)
-    client = CogneeClient("http://localhost:8000/api/v1", api_key="secret", timeout=7.5)
+    client = CogneeClient(
+        "http://localhost:8000/api/v1",
+        api_key="secret",
+        timeout=7.5,
+        graph_recall_timeout=8.5,
+    )
 
     result = client.recall(
         "What does Haider prefer?",
@@ -96,7 +101,7 @@ def test_recall_posts_expected_payload_and_api_key(monkeypatch):
     assert request.full_url == "http://localhost:8000/api/v1/recall"
     assert request.get_header("X-api-key") == "secret"
     assert request.get_header("Content-type") == "application/json"
-    assert seen["timeout"] == 7.5
+    assert seen["timeout"] == 8.5
     assert json.loads(request.data) == {
         "query": "What does Haider prefer?",
         "search_type": None,
@@ -149,10 +154,11 @@ def test_improve_sessions_posts_background_persistence_request(monkeypatch):
 
     def fake_urlopen(request, timeout):
         seen["request"] = request
+        seen["timeout"] = timeout
         return FakeResponse({"status": "queued"})
 
     monkeypatch.setattr("hermes_cognee_memory.client.urlopen", fake_urlopen)
-    client = CogneeClient("http://localhost:8000")
+    client = CogneeClient("http://localhost:8000", improve_timeout=123)
 
     result = client.improve_sessions(
         dataset_name="hermes-arcion",
@@ -169,6 +175,37 @@ def test_improve_sessions_posts_background_persistence_request(monkeypatch):
         "build_global_context_index": False,
     }
     assert result == {"status": "queued"}
+    assert seen["timeout"] == 123
+
+
+@pytest.mark.parametrize(
+    ("scope", "expected_timeout"),
+    [
+        ("session", 7),
+        ("session_context", 7),
+        ("graph", 46),
+        ("auto", 46),
+        (["session", "graph"], 46),
+        (None, 46),
+    ],
+)
+def test_recall_selects_timeout_by_scope(monkeypatch, scope, expected_timeout):
+    seen = {}
+
+    def fake_urlopen(_request, timeout):
+        seen["timeout"] = timeout
+        return FakeResponse([])
+
+    monkeypatch.setattr("hermes_cognee_memory.client.urlopen", fake_urlopen)
+    client = CogneeClient(
+        "http://localhost:8000",
+        timeout=7,
+        graph_recall_timeout=46,
+    )
+
+    client.recall("query", scope=scope)
+
+    assert seen["timeout"] == expected_timeout
 
 
 def test_health_uses_server_health_endpoint(monkeypatch):

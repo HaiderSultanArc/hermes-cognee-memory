@@ -14,6 +14,7 @@ Hermes's contribution policy keeps third-party product integrations out of the c
 - Hermes Agent **0.18.2+** with the exclusive `MemoryProvider` plugin API
 - Cognee API **1.3.0+** exposing `/health`, `/api/v1/datasets`, `/api/v1/remember/entry`, `/api/v1/recall`, and `/api/v1/improve`
 - Cognee session memory enabled with `CACHING=true`
+- Cognee per-dataset database isolation enabled with `ENABLE_BACKEND_ACCESS_CONTROL=true`
 - An API key in `COGNEE_API_KEY` when Cognee authentication is enabled
 
 The plugin itself has **no runtime Python dependencies** beyond Hermes and the standard library.
@@ -25,16 +26,23 @@ From a Cognee checkout, configure its required LLM/database environment and enab
 ```bash
 # In Cognee's .env
 CACHING=true
+ENABLE_BACKEND_ACCESS_CONTROL=true
+REQUIRE_AUTHENTICATION=false
 
 # Start the API at http://localhost:8000
 docker compose up
 ```
 
-See Cognee's own deployment documentation for production databases, authentication, and API-key creation. Do not expose an auth-disabled Cognee service to an untrusted network.
+Backend access control is required even for a single local user: it gives each hashed gateway
+dataset a separate graph/vector database context. It is independent of HTTP authentication, which
+may remain disabled for a loopback-only service. With backend access control disabled, local Kuzu
+graph recall can cross dataset boundaries. See Cognee's deployment documentation for production
+databases, authentication, and API-key creation. Do not expose an auth-disabled Cognee service to
+an untrusted network.
 
 ## Install
 
-After the standalone repository is published, install it into the active Hermes profile:
+Install the published standalone repository into the active Hermes profile:
 
 ```bash
 hermes plugins install HaiderSultanArc/hermes-cognee-memory
@@ -132,6 +140,8 @@ Edit `$HERMES_HOME/cognee/config.json`:
   "recall_scope": ["session", "graph"],
   "top_k": 8,
   "request_timeout_seconds": 15,
+  "graph_recall_timeout_seconds": 45,
+  "improve_timeout_seconds": 120,
   "prefetch_timeout_seconds": 3,
   "prefetch_max_concurrency": 2,
   "max_prefetch_chars": 6000,
@@ -140,11 +150,21 @@ Edit `$HERMES_HOME/cognee/config.json`:
   "writer_queue_size": 256,
   "write_retry_attempts": 3,
   "write_retry_base_seconds": 0.25,
-  "shutdown_flush_seconds": 30
+  "shutdown_flush_seconds": 130
 }
 ```
 
-`prefetch_timeout_seconds` only bounds how long Hermes waits for a queued background result. Network calls themselves are bounded by `request_timeout_seconds`. After `recall_circuit_failure_threshold` consecutive all-source recall failures, automatic and explicit recall pause for `recall_circuit_cooldown_seconds`. After cooldown, exactly one request probes the service; a failed probe immediately reopens the circuit, while a successful probe closes it.
+`request_timeout_seconds` bounds health, capture, dataset, and session-only recall requests.
+`graph_recall_timeout_seconds` applies when recall can query the graph, and
+`improve_timeout_seconds` applies to synchronous session improvement. `prefetch_timeout_seconds`
+only bounds how long Hermes waits for a queued background result; it does not cancel the underlying
+network call. After `recall_circuit_failure_threshold` consecutive all-source recall failures,
+automatic and explicit recall pause for `recall_circuit_cooldown_seconds`. After cooldown, exactly
+one request probes the service; a failed probe immediately reopens the circuit, while a successful
+probe closes it.
+
+Keep `shutdown_flush_seconds` longer than `improve_timeout_seconds`. A shorter flush window can
+terminate the provider while a valid session-end graph improvement is still running.
 
 ## Verify
 
@@ -158,7 +178,7 @@ Development checks:
 ```bash
 uv sync --locked --extra dev
 uv run pytest -q
-uv run pytest --cov=hermes_cognee_memory --cov-branch --cov-fail-under=85
+uv run pytest --cov=src/hermes_cognee_memory --cov-branch --cov-fail-under=85
 uv run ruff check .
 uv build
 ```
@@ -182,6 +202,8 @@ file directly when it discovers a standalone plugin; the file only re-exports th
 ## Security notes
 
 - API keys are sent only in the `X-Api-Key` header and are never written to provider JSON.
+- Hashed gateway dataset names provide hard graph isolation only when Cognee runs with per-dataset
+  backend access control enabled.
 - Service URLs reject embedded credentials, query strings, fragments, and unexpected paths; HTTP redirects are not followed, so auth headers cannot be redirected to another origin.
 - Success responses are capped at 2 MiB. Remote error bodies are never exposed to the model.
 - Plain HTTP is accepted only for loopback services; remote and link-local Cognee services must use HTTPS.

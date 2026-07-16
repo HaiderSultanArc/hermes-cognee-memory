@@ -172,6 +172,8 @@ class CogneeMemoryProvider(MemoryProvider):
             self._config["service_url"],
             api_key=api_key,
             timeout=float(self._config["request_timeout_seconds"]),
+            graph_recall_timeout=float(self._config["graph_recall_timeout_seconds"]),
+            improve_timeout=float(self._config["improve_timeout_seconds"]),
         )
         self._active = True
         self._stopping = False

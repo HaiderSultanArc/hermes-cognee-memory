@@ -11,4 +11,8 @@ the JSON file is mode `0600`. API keys do not belong in this file; the provider 
 `COGNEE_API_KEY` to the active Hermes `.env` instead.
 
 The defaults keep automatic capture and improvement enabled, automatic recall disabled, network
-and queue sizes bounded, and recall failures protected by a small circuit breaker.
+and queue sizes bounded, and recall failures protected by a small circuit breaker. Fast
+health/session operations use `request_timeout_seconds` (15 seconds), graph-capable recall uses
+`graph_recall_timeout_seconds` (45 seconds), and synchronous session improvement uses
+`improve_timeout_seconds` (120 seconds). `shutdown_flush_seconds` defaults to 130 seconds so the
+ordered writer can finish one in-flight improvement before teardown.
