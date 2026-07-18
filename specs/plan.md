@@ -14,7 +14,7 @@ The plugin owns:
 - conversion of completed Hermes turns into typed Cognee Q&A entries;
 - one configured persistent dataset per Hermes identity/profile;
 - privacy-safe mapping from Hermes gateway/session scope to Cognee session IDs;
-- ordered capture and session-end improvement requests;
+- ordered capture, periodic improvement checkpoints, and session-end catch-up requests;
 - bounded recall formatting and untrusted-content labeling;
 - authentication headers, URL validation, timeouts, retries, circuit breaking, and shutdown;
 - plugin configuration, diagnostics, documentation, packaging, and tests.
@@ -77,9 +77,12 @@ forgetting, weighting, or graph-mutation tools.
 - Send bounded question, answer, and context fields as a typed Q&A entry.
 - Track in-memory write acknowledgement so improvement cannot pass a failed or pending capture.
 
-### Session completion
+### Improvement checkpoints and session completion
 
-- Queue one synchronous `/improve` request for each session version that has acknowledged writes.
+- Queue one synchronous `/improve` checkpoint after each configured number of captured turns.
+- Keep the checkpoint independent of ArcHermes skill-review scheduling, which counts model/tool
+  iterations and is best-effort rather than a memory lifecycle boundary.
+- At session completion, queue a catch-up request when captures are newer than the last checkpoint.
 - Use the same FIFO worker as capture to preserve ordering.
 - Treat Cognee's returned result as the upstream pipeline outcome; do not reinterpret or extend its
   memory semantics.
@@ -103,7 +106,8 @@ credential lives only in `COGNEE_API_KEY`.
 | `service_url` | `http://localhost:8000` | Cognee server root; plaintext is loopback-only |
 | `dataset_name` | `hermes-{identity}` | Persistent graph dataset |
 | `auto_capture` | `true` | Queue completed primary turns |
-| `auto_improve` | `true` | Improve acknowledged sessions at lifecycle boundaries |
+| `auto_improve` | `true` | Enable periodic and lifecycle-boundary improvement |
+| `improve_every_n_turns` | `10` | Checkpoint acknowledged captures during active sessions; `0` disables periodic checkpoints |
 | `auto_recall` | `false` | Enable background prefetch only by explicit operator choice |
 | `recall_scope` | `session, graph` | Sources queried by automatic recall |
 | `top_k` | `8` | Bounded result count |

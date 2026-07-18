@@ -114,6 +114,7 @@ class CogneeMemoryProvider(MemoryProvider):
         self._prefetch_threads: set[threading.Thread] = set()
         self._prefetch_slots = threading.BoundedSemaphore(1)
         self._session_write_versions: dict[str, int] = {}
+        self._session_capture_counts: dict[str, int] = {}
         self._session_acknowledged_versions: dict[str, int] = {}
         self._session_failed_write_versions: dict[str, set[int]] = {}
         self._session_improved_versions: dict[str, int] = {}
@@ -187,6 +188,7 @@ class CogneeMemoryProvider(MemoryProvider):
         self._prefetch_slots = threading.BoundedSemaphore(prefetch_limit)
         with self._state_lock:
             self._session_write_versions.clear()
+            self._session_capture_counts.clear()
             self._session_acknowledged_versions.clear()
             self._session_failed_write_versions.clear()
             self._session_improved_versions.clear()
@@ -358,6 +360,37 @@ class CogneeMemoryProvider(MemoryProvider):
             logger.warning("Cognee memory queue is full; dropping %s", item[0])
             return False
 
+    def _queue_improvement(self, session_id: str, write_version: int) -> bool:
+        if (
+            not self._active
+            or self._agent_context != "primary"
+            or not bool(self._config.get("auto_improve", True))
+            or not self._writer_thread
+            or write_version <= 0
+        ):
+            return False
+        with self._state_lock:
+            improved_version = self._session_improved_versions.get(session_id, 0)
+            pending_version = self._session_pending_improvements.get(session_id, 0)
+            if write_version <= max(improved_version, pending_version):
+                return False
+            self._session_pending_improvements[session_id] = write_version
+            queued = self._enqueue_write(
+                (
+                    "improve_sessions",
+                    {
+                        "dataset_name": self._dataset_name,
+                        "session_ids": [session_id],
+                        "run_in_background": False,
+                        "_session_id": session_id,
+                        "_write_version": write_version,
+                    },
+                )
+            )
+            if not queued:
+                self._session_pending_improvements.pop(session_id, None)
+            return queued
+
     def _queue_memory(self, question: str, answer: str, context: str, session_id: str) -> None:
         if not self._write_enabled or not self._active or not self._client:
             return
@@ -380,10 +413,20 @@ class CogneeMemoryProvider(MemoryProvider):
                 })
             )
             self._session_write_versions[effective_session_id] = write_version
+            capture_count = self._session_capture_counts.get(effective_session_id, 0)
+            if queued:
+                capture_count += 1
+                self._session_capture_counts[effective_session_id] = capture_count
             if not queued:
                 self._session_failed_write_versions.setdefault(
                     effective_session_id, set()
                 ).add(write_version)
+        improve_interval = max(
+            0,
+            min(int(self._config.get("improve_every_n_turns", 10)), 10_000),
+        )
+        if queued and improve_interval and capture_count % improve_interval == 0:
+            self._queue_improvement(effective_session_id, write_version)
 
     def sync_turn(
         self,
@@ -746,34 +789,9 @@ class CogneeMemoryProvider(MemoryProvider):
     def on_session_end(self, messages: list[dict[str, Any]]) -> None:
         del messages
         session_id = self._session_id
-        if (
-            not self._active
-            or self._agent_context != "primary"
-            or not bool(self._config.get("auto_improve", True))
-            or not self._writer_thread
-        ):
-            return
         with self._state_lock:
             write_version = self._session_write_versions.get(session_id, 0)
-            improved_version = self._session_improved_versions.get(session_id, 0)
-            pending_version = self._session_pending_improvements.get(session_id, 0)
-            if not write_version or write_version <= max(improved_version, pending_version):
-                return
-            self._session_pending_improvements[session_id] = write_version
-            queued = self._enqueue_write(
-                (
-                    "improve_sessions",
-                    {
-                        "dataset_name": self._dataset_name,
-                        "session_ids": [session_id],
-                        "run_in_background": False,
-                        "_session_id": session_id,
-                        "_write_version": write_version,
-                    },
-                )
-            )
-            if not queued:
-                self._session_pending_improvements.pop(session_id, None)
+        self._queue_improvement(session_id, write_version)
 
     def on_session_switch(
         self,

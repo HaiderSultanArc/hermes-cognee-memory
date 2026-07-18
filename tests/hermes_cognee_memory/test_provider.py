@@ -146,6 +146,63 @@ def test_session_end_queues_durable_graph_improvement_once():
     ]
 
 
+def test_periodic_improvement_runs_every_configured_turn_count():
+    provider, fake = make_provider(config=provider_config(improve_every_n_turns=2))
+    provider.sync_turn("q1", "a1")
+    provider.sync_turn("q2", "a2")
+    provider._write_queue.join()
+
+    assert [call["question"] for call in fake.remember_calls] == ["q1", "q2"]
+    assert fake.improve_calls == [
+        {
+            "dataset_name": "hermes-arcion",
+            "session_ids": ["session-1"],
+            "run_in_background": False,
+        }
+    ]
+
+    provider.on_session_end([])
+    provider.shutdown()
+    assert len(fake.improve_calls) == 1
+
+
+def test_session_end_catches_turns_after_periodic_improvement():
+    provider, fake = make_provider(config=provider_config(improve_every_n_turns=2))
+    provider.sync_turn("q1", "a1")
+    provider.sync_turn("q2", "a2")
+    provider.sync_turn("q3", "a3")
+    provider.on_session_end([])
+    provider.shutdown()
+
+    assert len(fake.improve_calls) == 2
+
+
+def test_zero_periodic_interval_keeps_session_end_improvement():
+    provider, fake = make_provider(config=provider_config(improve_every_n_turns=0))
+    provider.sync_turn("q1", "a1")
+    provider.sync_turn("q2", "a2")
+    provider._write_queue.join()
+    assert fake.improve_calls == []
+
+    provider.on_session_end([])
+    provider.shutdown()
+    assert len(fake.improve_calls) == 1
+
+
+def test_explicit_remember_does_not_advance_periodic_turn_count():
+    provider, fake = make_provider(config=provider_config(improve_every_n_turns=2))
+    result = json.loads(provider.handle_tool_call("cognee_remember", {"content": "fact"}))
+    assert result["ok"] is True
+
+    provider.sync_turn("q1", "a1")
+    provider._write_queue.join()
+    assert fake.improve_calls == []
+
+    provider.sync_turn("q2", "a2")
+    provider.shutdown()
+    assert len(fake.improve_calls) == 1
+
+
 def test_empty_or_non_primary_session_is_not_improved():
     provider, fake = make_provider()
     provider.on_session_end([])

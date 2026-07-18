@@ -94,13 +94,23 @@ POST /api/v1/remember/entry
 
 The entry type is `qa`, with a session ID and the configured persistent Cognee dataset. The provider creates the dataset before the first capture. For gateways, the effective gateway scope and Hermes session ID are deterministically hashed into the Cognee session ID; raw user/chat identifiers are not sent as identifiers. All conversations for the configured agent/profile contribute improved knowledge to the same dataset, while Cognee's session cache remains separated by session. Primary non-CLI initialization without a stable gateway scope fails closed. Local CLI sessions use their Hermes session ID directly. Cron/delegated/non-primary contexts do not auto-write.
 
-At a real Hermes session boundary (exit, reset, or gateway expiry), the provider queues:
+After every `improve_every_n_turns` captured turns (10 by default), and again at a real Hermes
+session boundary when newer captures remain (exit, reset, or gateway expiry), the provider queues:
 
 ```text
 POST /api/v1/improve
 ```
 
-The provider sends that session ID with `run_in_background: false`. This bridges acknowledged cached Q&A into the permanent knowledge graph with confirmed completion. Turn writes and the improve request share one bounded FIFO worker, so persistence cannot overtake pending captures. Transient writes use bounded exponential retry; an unacknowledged capture blocks improvement rather than falsely marking the session persisted. A prolonged outage can still exceed the in-memory retry and shutdown windows, so this is best-effort unless the operator provides external process supervision and recovery. Set `auto_improve` to `false` if graph processing cost should be triggered manually.
+The provider sends that session ID with `run_in_background: false`. This bridges acknowledged cached
+Q&A into the permanent knowledge graph with confirmed completion while long-running sessions are
+still active. Turn writes and improvement checkpoints share one bounded FIFO worker, so persistence
+cannot overtake pending captures. ArcHermes skill-review scheduling is deliberately independent;
+Cognee checkpoints count captured primary-agent turns instead of model/tool iterations. Transient
+writes use bounded exponential retry; an unacknowledged capture blocks improvement rather than
+falsely marking the session persisted. A prolonged outage can still exceed the in-memory retry and
+shutdown windows, so this is best-effort unless the operator provides external process supervision
+and recovery. Set `improve_every_n_turns` to `0` to disable periodic checkpoints while retaining
+session-end improvement, or set `auto_improve` to `false` to disable both automatic paths.
 
 Built-in Hermes `MEMORY.md` and `USER.md` remain the curated source of truth and are not mirrored into Cognee. Use `cognee_remember` for information that should also enter episodic/graph memory.
 
@@ -121,7 +131,7 @@ Default scope is `session + graph`, with automatic Cognee search routing (`searc
 The provider exposes:
 
 - `cognee_recall` — explicit memory lookup with scope and result limit
-- `cognee_remember` — explicit session capture, persisted to the graph after a successful session-end improvement
+- `cognee_remember` — explicit session capture, persisted to the graph after a successful periodic or session-end improvement
 
 The plugin does not define memory deletion, decay, reinforcement, or retention policy. Those semantics remain owned by the configured upstream Cognee service.
 
@@ -135,6 +145,7 @@ Edit `$HERMES_HOME/cognee/config.json`:
   "dataset_name": "hermes-{identity}",
   "auto_capture": true,
   "auto_improve": true,
+  "improve_every_n_turns": 10,
   "auto_recall": false,
   "recall_scope": ["session", "graph"],
   "top_k": 8,
@@ -164,6 +175,10 @@ probe closes it.
 
 Keep `shutdown_flush_seconds` longer than `improve_timeout_seconds`. A shorter flush window can
 terminate the provider while a valid session-end graph improvement is still running.
+
+`improve_every_n_turns` counts successfully queued automatic turn captures within each Cognee
+session. Its default of `10` bounds how long an active conversation remains only in session cache.
+`0` disables periodic checkpoints without disabling the final lifecycle-boundary improvement.
 
 ## Verify
 

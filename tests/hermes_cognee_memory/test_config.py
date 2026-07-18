@@ -23,4 +23,5 @@ def test_load_config_merges_secure_profile_values_with_defaults(tmp_path):
     assert loaded["request_timeout_seconds"] == 15
     assert loaded["graph_recall_timeout_seconds"] == 45
     assert loaded["improve_timeout_seconds"] == 300
+    assert loaded["improve_every_n_turns"] == 10
     assert loaded["shutdown_flush_seconds"] == 310

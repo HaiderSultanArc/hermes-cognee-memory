@@ -14,6 +14,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "dataset_name": "hermes-{identity}",
     "auto_capture": True,
     "auto_improve": True,
+    "improve_every_n_turns": 10,
     "auto_recall": False,
     "recall_scope": ["session", "graph"],
     "top_k": 8,
