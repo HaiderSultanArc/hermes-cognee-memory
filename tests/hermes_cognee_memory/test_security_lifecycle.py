@@ -20,20 +20,10 @@ class FakeClient:
         self.remember_calls = []
         self.improve_calls = []
         self.ensure_dataset_calls = []
-        self.forget_calls = []
 
     def remember_qa(self, **kwargs):
         self.remember_calls.append(kwargs)
         return {"status": "session_stored", "entry_id": ENTRY_ID}
-
-    def forget_entry(self, **kwargs):
-        self.forget_calls.append(kwargs)
-        return {
-            "status": "forgotten",
-            "entry_id": kwargs["entry_id"],
-            "session_deleted": True,
-            "graph_deleted": True,
-        }
 
     def improve_sessions(self, **kwargs):
         self.improve_calls.append(kwargs)

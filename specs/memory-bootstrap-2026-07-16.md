@@ -1,5 +1,8 @@
 # Cognee Curated-Memory Bootstrap — 2026-07-16
 
+> Historical record: this import used an earlier ArcCognee fork. Frequency-reinforcement and
+> exact-entry-deletion claims below are not capabilities of the current upstream-aligned service.
+
 ## Result
 
 Eleven compact records from the current curated Codex memory were copied into Cognee and
@@ -23,7 +26,7 @@ not edited or deleted.
 3. ArcFunction development-to-live deployment workflow.
 4. Local Cognee configuration, isolation, and credential separation.
 5. Verified Cognee request, recall, improvement, and shutdown timeouts.
-6. Verified Ladybug node/edge frequency reinforcement and idempotence.
+6. Historical Ladybug frequency-reinforcement experiment, since removed from ArcCognee.
 7. ArcCodex sandbox triage and important implementation files.
 8. Hermes runtime selection through `HERMES_CODEX_BIN` and host-aware restarts.
 9. Common Codex resume commands.
@@ -72,18 +75,15 @@ mechanism.
 
 - Do not automatically re-import the full snapshot after every curated-memory change.
   That would create duplicate or contradictory graph facts.
-- When a seeded fact is corrected, curated memory wins until Cognee has a provenance-backed
-  replacement workflow. The new exact-delete path applies only to entries persisted with
-  one Q&A per Cognee `data_id`.
+- When a seeded fact is corrected, curated memory wins. The plugin does not provide a custom
+  replacement or exact-delete workflow.
 - Future bulk imports should use one session per coherent topic instead of grouping all
   topics in one session.
 - Use explicit `cognee_recall` and treat returned content as untrusted evidence.
 
-The 11 records in this snapshot were improved before exact per-entry provenance was
-implemented. Their permanent graph representation is grouped and cannot be safely split
-by the new tool. Do not populate the local provenance ledger retroactively from cache
-UUIDs. If individual deletion is required, perform a separately approved controlled
-rebuild and verify the replacement before removing the grouped snapshot.
+The 11 records in this snapshot form a grouped historical graph representation. The current plugin
+does not maintain a local provenance ledger or provide per-entry deletion. Any cleanup or rebuild
+must use supported upstream Cognee lifecycle operations and separate operator approval.
 
 ## Newly Observed Operational Issue
 
