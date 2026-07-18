@@ -83,48 +83,84 @@ def make_provider(*, config=None, client=None, session_id="session-1", **initial
     return provider, fake
 
 
-def test_gateway_dataset_is_scoped_to_stable_user_without_exposing_identifier():
-    def dataset_for(user_id):
-        provider, _ = make_provider(
+def test_gateway_uses_persistent_dataset_and_private_session_id():
+    def scope_for(user_id):
+        provider, fake = make_provider(
             platform="telegram",
             gateway_session_key=f"agent:main:telegram:dm:{user_id}",
             user_id=user_id,
         )
         try:
-            return provider.dataset_name
+            provider.sync_turn("question", "answer", session_id="session-1")
+            provider.shutdown()
+            return provider.dataset_name, fake.remember_calls[0]["session_id"]
         finally:
             provider.shutdown()
 
-    alice = dataset_for("alice@example.test")
-    bob = dataset_for("bob@example.test")
+    alice_dataset, alice_session = scope_for("alice@example.test")
+    bob_dataset, bob_session = scope_for("bob@example.test")
 
-    assert alice == dataset_for("alice@example.test")
-    assert alice != bob
-    assert alice.startswith("hermes-arcion-g-")
-    assert "alice" not in alice
+    assert alice_dataset == bob_dataset == "hermes-arcion"
+    assert alice_session == scope_for("alice@example.test")[1]
+    assert alice_session != bob_session
+    assert alice_session.startswith("hermes-gateway-")
+    assert "alice" not in alice_session
 
 
-def test_gateway_dataset_follows_effective_hermes_session_scope():
-    def dataset_for(gateway_session_key, user_id):
-        provider, _ = make_provider(
+def test_gateway_session_id_follows_effective_hermes_scope_and_session():
+    def session_for(gateway_session_key, user_id, session_id="session-1"):
+        provider, fake = make_provider(
             platform="telegram",
             gateway_session_key=gateway_session_key,
             user_id=user_id,
         )
         try:
-            return provider.dataset_name
+            provider.sync_turn("question", "answer", session_id=session_id)
+            provider.shutdown()
+            return fake.remember_calls[0]["session_id"]
         finally:
             provider.shutdown()
 
-    shared_alice = dataset_for("agent:main:telegram:thread:123", "alice")
-    shared_bob = dataset_for("agent:main:telegram:thread:123", "bob")
-    isolated = dataset_for("agent:main:telegram:thread:123:alice", "alice")
+    shared_alice = session_for("agent:main:telegram:thread:123", "alice")
+    shared_bob = session_for("agent:main:telegram:thread:123", "bob")
+    isolated = session_for("agent:main:telegram:thread:123:alice", "alice")
+    next_session = session_for("agent:main:telegram:thread:123", "alice", "session-2")
 
     assert shared_alice == shared_bob
     assert shared_alice != isolated
-    assert shared_alice.startswith("hermes-arcion-g-")
+    assert shared_alice != next_session
+    assert shared_alice.startswith("hermes-gateway-")
     assert "telegram" not in shared_alice
     assert "123" not in shared_alice
+
+
+def test_gateway_lifecycle_reuses_dataset_and_rotates_private_session_id():
+    provider, fake = make_provider(
+        platform="telegram",
+        gateway_session_key="agent:main:telegram:dm:alice",
+        session_id="session-1",
+    )
+    first_session_id = provider._session_id
+
+    provider.sync_turn("first question", "first answer")
+    provider.on_session_end([])
+    provider._write_queue.join()
+    provider.on_session_switch("session-2", parent_session_id="session-1")
+    second_session_id = provider._session_id
+    provider.sync_turn("second question", "second answer")
+    provider.shutdown()
+
+    assert first_session_id != second_session_id
+    assert fake.ensure_dataset_calls == ["hermes-arcion"]
+    assert [call["dataset_name"] for call in fake.remember_calls] == [
+        "hermes-arcion",
+        "hermes-arcion",
+    ]
+    assert [call["session_id"] for call in fake.remember_calls] == [
+        first_session_id,
+        second_session_id,
+    ]
+    assert fake.improve_calls[0]["session_ids"] == [first_session_id]
 
 
 def test_gateway_user_id_without_session_scope_fails_closed():
