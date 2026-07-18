@@ -14,7 +14,6 @@ Hermes's contribution policy keeps third-party product integrations out of the c
 - Hermes Agent **0.18.2+** with the exclusive `MemoryProvider` plugin API
 - Cognee API **1.3.0+** exposing `/health`, `/api/v1/datasets`, `/api/v1/remember/entry`, `/api/v1/recall`, and `/api/v1/improve`
 - Cognee session memory enabled with `CACHING=true`
-- Cognee per-dataset database isolation enabled with `ENABLE_BACKEND_ACCESS_CONTROL=true`
 - An API key in `COGNEE_API_KEY` when Cognee authentication is enabled
 
 The plugin itself has **no runtime Python dependencies** beyond Hermes and the standard library.
@@ -27,18 +26,18 @@ From a Cognee checkout, configure its required LLM/database environment and enab
 # In Cognee's .env
 CACHING=true
 ENABLE_BACKEND_ACCESS_CONTROL=true
-REQUIRE_AUTHENTICATION=false
+REQUIRE_AUTHENTICATION=true
 
 # Start the API at http://localhost:8000
 docker compose up
 ```
 
-Backend access control is required even for a single local user: it gives each hashed gateway
-dataset a separate graph/vector database context. It is independent of HTTP authentication, which
-may remain disabled for a loopback-only service. With backend access control disabled, local Kuzu
-graph recall can cross dataset boundaries. See Cognee's deployment documentation for production
-databases, authentication, and API-key creation. Do not expose an auth-disabled Cognee service to
-an untrusted network.
+Backend access control is recommended when multiple Cognee users or datasets need authorization
+boundaries. The plugin uses one configured dataset across conversations; authentication protects
+that persistent graph, while hashed session IDs separate Cognee's session cache without exposing
+raw gateway identifiers. See Cognee's deployment documentation for production databases,
+authentication, and API-key creation. Do not expose an auth-disabled Cognee service to an
+untrusted network.
 
 ## Install
 
@@ -93,7 +92,7 @@ After each completed primary-agent turn, the provider queues a non-blocking requ
 POST /api/v1/remember/entry
 ```
 
-The entry type is `qa`, with the Hermes session ID and configured Cognee dataset. The provider creates the dataset before the first capture, then records the acknowledged entry UUID in `$HERMES_HOME/cognee/provenance.json`. Gateway memory receives a deterministic hashed suffix derived from Hermes's effective session key: DMs and per-user sessions stay isolated, while intentionally shared group/thread sessions share their conversation dataset. Primary non-CLI initialization without that scope fails closed; a user identifier alone is not accepted because it cannot prove whether the conversation is shared. Local CLI sessions retain the profile-wide dataset name. Cron/delegated/non-primary contexts do not auto-write.
+The entry type is `qa`, with a session ID and the configured persistent Cognee dataset. The provider creates the dataset before the first capture, then records the acknowledged entry UUID in `$HERMES_HOME/cognee/provenance.json`. For gateways, the effective gateway scope and Hermes session ID are deterministically hashed into the Cognee session ID; raw user/chat identifiers are not sent as identifiers. All conversations for the configured agent/profile contribute improved knowledge to the same dataset, while Cognee's session cache remains separated by session. Primary non-CLI initialization without a stable gateway scope fails closed. Local CLI sessions use their Hermes session ID directly. Cron/delegated/non-primary contexts do not auto-write.
 
 At a real Hermes session boundary (exit, reset, or gateway expiry), the provider queues:
 
@@ -211,12 +210,12 @@ file directly when it discovers a standalone plugin; the file only re-exports th
 ## Security notes
 
 - API keys are sent only in the `X-Api-Key` header and are never written to provider JSON.
-- Hashed gateway dataset names provide hard graph isolation only when Cognee runs with per-dataset
-  backend access control enabled.
+- The configured dataset is persistent across conversations; use separate configured datasets or
+  Cognee identities only for deliberate agent, tenant, or trust boundaries.
 - Service URLs reject embedded credentials, query strings, fragments, and unexpected paths; HTTP redirects are not followed, so auth headers cannot be redirected to another origin.
 - Success responses are capped at 2 MiB. Remote error bodies are never exposed to the model.
 - Plain HTTP is accepted only for loopback services; remote and link-local Cognee services must use HTTPS.
-- Gateway datasets follow Hermes's effective session boundary using deterministic hashes. DMs and per-user sessions remain isolated; intentionally shared group/thread sessions share memory just as they share transcript context. Missing gateway scope fails closed, and raw identifiers are never placed in dataset names.
+- Gateway scope and the Hermes session ID are hashed into deterministic Cognee session IDs. Missing gateway scope fails closed, and raw gateway identifiers are not sent as identifiers. Persistent graph memory is intentionally shared within the configured dataset.
 - Automatic capture sends completed user/assistant turns, and automatic recall sends the current query, to the configured Cognee service. Set both `auto_capture` and `auto_recall` to `false` when conversation data must stay inside Hermes.
 - Explicitly recalled content is probabilistic, untrusted evidence. It is flattened to one line per field and labeled as non-authoritative data; it cannot authorize actions or override current user instructions or curated Hermes memory. Automatic recall is opt-in because Hermes 0.18.2 applies its generic authoritative-memory wrapper to provider-prefetched content.
 - Cognee is a network memory service. Its availability, retention, backups, access control, and deletion policy remain operator responsibilities.

@@ -3,15 +3,16 @@
 Source: `src/hermes_cognee_memory/provider.py`
 
 `CogneeMemoryProvider` implements Hermes's exclusive `MemoryProvider` contract. It owns the
-provider lifecycle, dataset/session scoping, background capture queue, recall prefetch workers,
+provider lifecycle, persistent dataset and session scoping, background capture queue, recall prefetch workers,
 session improvement, and the `cognee_recall`, `cognee_remember`, and `cognee_forget` tools.
 
 Key boundaries:
 
 - only completed primary-agent turns are captured automatically;
-- gateway datasets are derived from Hermes's stable session scope without exposing raw IDs;
-- hard graph isolation requires Cognee per-dataset backend access control; names alone do not
-  isolate a single shared Kuzu graph;
+- the configured dataset remains stable across conversations so improved knowledge forms one
+  persistent graph;
+- gateway scope and the Hermes session ID are hashed into a deterministic Cognee session ID,
+  keeping raw user/chat identifiers out of the service while separating session cache entries;
 - writes and improvement share one bounded FIFO worker so improvement cannot pass pending writes;
 - recall output is bounded and rendered as untrusted evidence;
 - repeated recall failures open a circuit breaker and allow one recovery probe after cooldown;

@@ -100,6 +100,7 @@ class CogneeMemoryProvider(MemoryProvider):
         self._client: CogneeClient | None = None
         self._provenance: ProvenanceStore | None = None
         self._session_id = ""
+        self._gateway_scope = ""
         self._dataset_name = ""
         self._dataset_ready = False
         self._platform = ""
@@ -153,24 +154,20 @@ class CogneeMemoryProvider(MemoryProvider):
         merged = dict(DEFAULT_CONFIG)
         merged.update(self._config)
         self._config = merged
-        self._session_id = _clean_text(session_id, 200)
         self._platform = _clean_text(kwargs.get("platform") or "unknown", 80)
         self._agent_context = _clean_text(kwargs.get("agent_context") or "primary", 80)
         identity = _safe_identity(kwargs.get("agent_identity") or "default")
         template = _clean_text(self._config.get("dataset_name") or "hermes-{identity}", 200)
         self._dataset_name = template.replace("{identity}", identity)
-        gateway_scope = _clean_text(kwargs.get("gateway_session_key"), 2000)
-        if gateway_scope:
-            digest = hashlib.sha256(
-                f"{self._platform}\0gateway\0{gateway_scope}".encode("utf-8")
-            ).hexdigest()[:16]
-            self._dataset_name = f"{self._dataset_name[:180]}-g-{digest}"
-        elif self._agent_context == "primary" and self._platform != "cli":
+        self._gateway_scope = _clean_text(kwargs.get("gateway_session_key"), 2000)
+        if not self._gateway_scope and self._agent_context == "primary" and self._platform != "cli":
             self._active = False
             self._write_enabled = False
             raise ValueError(
                 "Cognee requires a stable gateway session scope for primary non-CLI agents"
             )
+        self._session_id = ""
+        self._session_id = self._effective_session_id(session_id)
         api_key = os.environ.get("COGNEE_API_KEY", "")
         self._client = self._client_factory(
             self._config["service_url"],
@@ -215,6 +212,20 @@ class CogneeMemoryProvider(MemoryProvider):
             )
             self._writer_thread.start()
         logger.info("Cognee memory initialized (dataset=%s)", self._dataset_name)
+
+    def _effective_session_id(self, session_id: str = "") -> str:
+        hermes_session_id = _clean_text(session_id, 200)
+        if not self._gateway_scope:
+            return hermes_session_id or self._session_id
+        if not hermes_session_id and self._session_id:
+            return self._session_id
+        digest = hashlib.sha256(
+            (
+                f"{self._platform}\0gateway\0{self._gateway_scope}"
+                f"\0session\0{hermes_session_id}"
+            ).encode("utf-8")
+        ).hexdigest()[:32]
+        return f"hermes-gateway-{digest}"
 
     def system_prompt_block(self) -> str:
         if not self._active:
@@ -412,7 +423,7 @@ class CogneeMemoryProvider(MemoryProvider):
         answer = _clean_text(answer)
         if not question and not answer:
             return
-        effective_session_id = _clean_text(session_id or self._session_id, 200)
+        effective_session_id = self._effective_session_id(session_id)
         with self._state_lock:
             write_version = self._session_write_versions.get(effective_session_id, 0) + 1
             queued = self._enqueue_write(
@@ -642,7 +653,7 @@ class CogneeMemoryProvider(MemoryProvider):
                 self._prefetch_slots.release()
 
         try:
-            effective_session_id = _clean_text(session_id or self._session_id, 200)
+            effective_session_id = self._effective_session_id(session_id)
             with self._state_lock:
                 if not self._active or self._stopping:
                     self._prefetch_slots.release()
@@ -674,7 +685,7 @@ class CogneeMemoryProvider(MemoryProvider):
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         del query
-        effective_session_id = _clean_text(session_id or self._session_id, 200)
+        effective_session_id = self._effective_session_id(session_id)
         with self._state_lock:
             state = self._prefetch_states.get(effective_session_id)
             thread = state.get("thread") if state else None
@@ -944,7 +955,7 @@ class CogneeMemoryProvider(MemoryProvider):
     ) -> None:
         del parent_session_id, reset, rewound, kwargs
         self._invalidate_prefetch(self._session_id)
-        self._session_id = _clean_text(new_session_id, 200)
+        self._session_id = self._effective_session_id(new_session_id)
 
     def shutdown(self) -> None:
         self._active = False
