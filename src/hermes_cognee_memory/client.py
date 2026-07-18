@@ -181,7 +181,7 @@ class CogneeClient:
             },
             timeout=self.improve_timeout,
         )
-        if not isinstance(result, dict):
+        if not isinstance(result, dict) or not result:
             raise CogneeAPIError("Cognee improve endpoint returned an unexpected response")
         return result
 

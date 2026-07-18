@@ -139,6 +139,7 @@ remote plaintext HTTP, invalid numeric bounds, and secret persistence in JSON.
 - Preserve FIFO ordering between capture and improvement.
 - Retry transient mutation failures with bounded exponential backoff.
 - Do not mark a session improved when an earlier capture was not acknowledged.
+- Treat an empty successful `/improve` response as lock contention, not confirmed persistence.
 - Bound writer queues, prefetch concurrency, response sizes, retry attempts, and shutdown time.
 - Use a recall circuit breaker so repeated outages do not add latency to every Hermes turn.
 - Keep health/session timeouts short while giving graph recall and improvement independent budgets.

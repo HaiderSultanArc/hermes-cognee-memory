@@ -178,6 +178,21 @@ def test_improve_sessions_posts_background_persistence_request(monkeypatch):
     assert seen["timeout"] == 123
 
 
+def test_improve_sessions_rejects_empty_lock_contention_response(monkeypatch):
+    monkeypatch.setattr(
+        "hermes_cognee_memory.client.urlopen",
+        lambda _request, timeout: FakeResponse({}),
+    )
+    client = CogneeClient("http://localhost:8000")
+
+    with pytest.raises(CogneeAPIError, match="unexpected response"):
+        client.improve_sessions(
+            dataset_name="hermes-arcion",
+            session_ids=["session-1"],
+            run_in_background=False,
+        )
+
+
 @pytest.mark.parametrize(
     ("scope", "expected_timeout"),
     [

@@ -13,6 +13,11 @@ The client deliberately keeps the network boundary narrow:
 - responses are capped at 2 MiB and endpoint response shapes are validated;
 - transport and response errors are converted to `CogneeAPIError` with bounded messages.
 
+An empty successful `/improve` response is rejected. Upstream Cognee returns `{}` when another
+improvement already holds the same single-session lock; treating that response as completed could
+advance the provider checkpoint past captures that the competing run did not see. Rejection sends
+lock contention through the provider's bounded retry and session-end catch-up paths.
+
 The transport uses operation-specific timeouts: short requests keep the base timeout, recall that
 can enter the graph uses the graph-recall timeout, and synchronous improvement uses the improvement
 timeout. This prevents slow graph work from being reported as an outage without making health and
